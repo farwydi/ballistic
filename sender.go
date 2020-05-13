@@ -67,6 +67,10 @@ func (s *Sender) publish(query string, rows [][]interface{}) error {
 }
 
 func (s *Sender) RunPusher(period time.Duration) {
+	if period < time.Millisecond {
+		period = time.Second
+	}
+
 	t := time.NewTicker(period)
 	sender := s
 	go func() {
