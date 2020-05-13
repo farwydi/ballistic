@@ -11,10 +11,16 @@ import (
 	"strings"
 )
 
-func NewFileDumper(basePath string) Dumper {
+func NewFileDumper(basePath string) (Dumper, error) {
+	if _, err := os.Stat(basePath); os.IsNotExist(err) {
+		err := os.Mkdir(basePath, 0644)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &FileDumper{
 		basePath: basePath,
-	}
+	}, nil
 }
 
 type FileDumper struct {
