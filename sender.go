@@ -52,7 +52,7 @@ func (s *Sender) publish(query string, rows [][]interface{}) error {
 	}
 
 	for _, args := range rows {
-		_, err := stmt.Exec(args)
+		_, err := stmt.Exec(args...)
 		if err != nil {
 			return err
 		}
