@@ -13,21 +13,29 @@ func NewSender(dumper Dumper, connect *sql.DB) *Sender {
 		route:   map[string][][]interface{}{},
 		stopSig: make(chan struct{}),
 		connect: connect,
+		failRegister: func(_ error) {
+			// Nothing
+		},
 	}
 }
 
 type Sender struct {
-	dumper   Dumper
-	mx       sync.Mutex
-	route    map[string][][]interface{}
-	stopSig  chan struct{}
-	connect  *sql.DB
-	activity int32
+	dumper       Dumper
+	mx           sync.Mutex
+	route        map[string][][]interface{}
+	stopSig      chan struct{}
+	connect      *sql.DB
+	activity     int32
+	failRegister func(err error)
 }
 
 func (s *Sender) Stop() {
 	atomic.StoreInt32(&s.activity, int32(1))
 	s.stopSig <- struct{}{}
+}
+
+func (s *Sender) SubscribeOnFail(f func(err error)) {
+	s.failRegister = f
 }
 
 func (s *Sender) Push(query string, args ...interface{}) {
@@ -86,6 +94,8 @@ func (s *Sender) RunPusher(period time.Duration) {
 					err := sender.publish(query, rows)
 					if err != nil {
 						sender.dumper.Dump(query, rows)
+						s.failRegister(err)
+						return
 					}
 				}
 
@@ -102,6 +112,7 @@ func (s *Sender) RunPusher(period time.Duration) {
 					err := sender.publish(query, rows)
 					if err != nil {
 						sender.dumper.Dump(query, rows)
+						s.failRegister(err)
 						return
 					}
 					delete(safes, query)
