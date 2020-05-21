@@ -101,11 +101,13 @@ func (s *Sender) RunPusher(period time.Duration) {
 
 				// Make copy
 				sender.mx.Lock()
-				safes = map[string][][]interface{}{}
-				for query, rows := range sender.route {
-					safes[query] = rows
+				if len(sender.route) > 0 {
+					safes = map[string][][]interface{}{}
+					for query, rows := range sender.route {
+						safes[query] = rows
+					}
+					sender.route = map[string][][]interface{}{}
 				}
-				sender.route = map[string][][]interface{}{}
 				sender.mx.Unlock()
 
 				for query, rows := range safes {
