@@ -17,7 +17,7 @@ type senderTestSuite struct {
 	suite.Suite
 }
 
-func (suite *senderTestSuite) Test() {
+func (suite *senderTestSuite) TestTwo() {
 	db, sm, err := sqlmock.New()
 	require.NoError(suite.T(), err, "An error was not expected when opening a stub database connection")
 	sm.ExpectBegin()
@@ -36,6 +36,25 @@ func (suite *senderTestSuite) Test() {
 	})
 	s.Push("SELECT $1", 1)
 	s.Push("SELECT $1", 2)
+	s.RunPusher(time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
+}
+
+func (suite *senderTestSuite) TestOnePush() {
+	db, sm, err := sqlmock.New()
+	require.NoError(suite.T(), err, "An error was not expected when opening a stub database connection")
+	sm.ExpectBegin()
+	stmt := sm.ExpectPrepare("SELECT ?").
+		WillBeClosed()
+	stmt.ExpectExec().
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	sm.ExpectCommit()
+	s := NewSender(NewNullDumper(), db)
+	s.SubscribeOnFail(func(err error) {
+		assert.NoError(suite.T(), err, "Fail send")
+	})
+	s.Push("SELECT $1", 1)
 	s.RunPusher(time.Millisecond)
 	time.Sleep(2 * time.Millisecond)
 }
