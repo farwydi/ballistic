@@ -49,29 +49,48 @@ func (s *Sender) Push(query string, args ...interface{}) {
 }
 
 func (s *Sender) publish(query string, rows [][]interface{}) error {
+	panicked := true
 	tx, err := s.connect.Begin()
 	if err != nil {
 		return err
 	}
+	defer func() {
+		// Make sure to rollback when panic, Block error or Commit error
+		if panicked || err != nil {
+			if err := tx.Rollback(); err != nil {
+				s.failRegister(err)
+			}
+		}
+	}()
 
-	stmt, err := tx.Prepare(query)
-	if err != nil {
-		return err
-	}
-
-	for _, args := range rows {
-		_, err := stmt.Exec(args...)
+	err = func() error {
+		stmt, err := tx.Prepare(query)
 		if err != nil {
 			return err
 		}
+
+		for _, args := range rows {
+			_, err := stmt.Exec(args...)
+			if err != nil {
+				return err
+			}
+		}
+
+		err = stmt.Close()
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}()
+
+	if err == nil {
+		err = tx.Commit()
 	}
 
-	err = stmt.Close()
-	if err != nil {
-		return err
-	}
+	panicked = false
 
-	return nil
+	return err
 }
 
 func (s *Sender) RunPusher(period time.Duration) {
