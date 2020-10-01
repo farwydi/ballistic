@@ -4,6 +4,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -13,11 +14,12 @@ func TestFileDumper_DirShouldBeMake(t *testing.T) {
 	tmpDir, err := ioutil.TempDir("", "_test")
 	require.NoError(t, err)
 
-	tmpDir = filepath.Join(tmpDir, "test")
+	tmpDir = filepath.Join(tmpDir, "test", "test")
 	_, err = NewFileDumper(tmpDir, nil, nil)
 	assert.NoError(t, err)
 
 	assert.DirExists(t, tmpDir)
+	os.RemoveAll(tmpDir)
 }
 
 func TestFileDumper_Dump(t *testing.T) {
