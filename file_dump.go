@@ -15,7 +15,7 @@ func NewFileDumper(basePath string,
 	failSaveFunc func(query string, args []interface{}, err error),
 	failOpenFunc func(err error)) (Dumper, error) {
 	if _, err := os.Stat(basePath); os.IsNotExist(err) {
-		err := os.Mkdir(basePath, 0644)
+		err := os.MkdirAll(basePath, 0644)
 		if err != nil {
 			return nil, err
 		}
