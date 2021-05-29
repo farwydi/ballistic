@@ -1,10 +1,6 @@
-name: CI
+name: Tetsing and coverage
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [push, pull_request]
 
 jobs:
   testing:
@@ -27,4 +23,4 @@ jobs:
       - name: Run tests with coverage
         run: earthly -P +test
       - name: Upload coverage to Codecov
-        run: bash <(curl -s https://codecov.io/bash)
+        uses: codecov/codecov-action@v1
