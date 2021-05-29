@@ -15,6 +15,6 @@ test:
     COPY --dir scripts ./
     WITH DOCKER --compose docker-compose.yml
         RUN sh ./scripts/wait.sh &&\
-            go test -race --tags=integration ./... -coverprofile=coverage.txt -covermode=atomic
+            go test -race --tags=integration ./... -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt
     END
     SAVE ARTIFACT ./coverage.txt AS LOCAL ./coverage.txt
