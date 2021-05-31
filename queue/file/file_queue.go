@@ -12,7 +12,6 @@ import (
 	"os"
 	"reflect"
 	"sync"
-	"sync/atomic"
 )
 
 type Safe interface {
@@ -46,12 +45,14 @@ type Queue struct {
 	mx     sync.Mutex
 
 	sum   hash.Hash32
-	count int32
+	count int
 	mw    io.Writer
 }
 
 func (f *Queue) Len() int {
-	return int(atomic.LoadInt32(&f.count))
+	f.mx.Lock()
+	defer f.mx.Unlock()
+	return f.count
 }
 
 func (f *Queue) checkFile() (*Queue, error) {
@@ -122,7 +123,7 @@ func (f *Queue) checkFile() (*Queue, error) {
 		currOffset += int64(size)
 
 		if currOffset > skipAhead {
-			atomic.AddInt32(&f.count, 1)
+			f.count++
 		}
 	}
 
@@ -199,7 +200,7 @@ func (f *Queue) Push(model encoding.BinaryMarshaler) error {
 		return err
 	}
 
-	atomic.AddInt32(&f.count, 1)
+	f.count++
 
 	err = f.updateSum(bs)
 	if err != nil {
@@ -213,14 +214,12 @@ func (f *Queue) Eject(limit int) (models []interface{}, err error) {
 	f.mx.Lock()
 	defer f.mx.Unlock()
 
-	count := int(atomic.LoadInt32(&f.count))
-
-	if limit > count {
-		limit = count
+	if limit > f.count {
+		limit = f.count
 	}
 
 	if limit < 0 {
-		limit = count
+		limit = f.count
 	}
 
 	if limit == 0 {
@@ -261,7 +260,7 @@ func (f *Queue) Eject(limit int) (models []interface{}, err error) {
 
 		dataBuf := buf[0:size]
 		_, err = f.file.Read(dataBuf)
-		atomic.AddInt32(&f.count, -1)
+		f.count--
 		if err != nil {
 			return models[:i], err
 		}
