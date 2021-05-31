@@ -1,13 +1,12 @@
 package sender
 
 import (
+	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"github.com/farwydi/ballistic"
 	"github.com/farwydi/ballistic/queue/file"
 	"github.com/farwydi/ballistic/queue/memory"
-	"sync/atomic"
 	"time"
 )
 
@@ -47,39 +46,33 @@ type Sender struct {
 	filePool   ballistic.Pool
 	memoryPool ballistic.Pool
 
-	stopSig  chan bool
-	connect  *sql.DB
-	shutdown int32
+	stopSig chan bool
+	connect *sql.DB
 }
 
 func (s *Sender) Stop(sendTail bool) {
-	atomic.StoreInt32(&s.shutdown, 1)
 	s.stopSig <- sendTail
 	<-s.stopSig
 }
 
 func (s *Sender) Push(model ballistic.DataModel) error {
-	if atomic.LoadInt32(&s.shutdown) == 0 {
-		err := s.filePool.Push(model)
-		if err != nil {
-			if s.cfg.UseMemoryFallback {
-				s.logger.Warnw("writing to disk failed", "error", err)
+	err := s.filePool.Push(model)
+	if err != nil {
+		if s.cfg.UseMemoryFallback {
+			s.logger.Warnw("writing to disk failed", "error", err)
 
-				// the memory queue does not return an error
-				_ = s.memoryPool.Push(model)
-				return nil
-			}
-			return fmt.Errorf("writing to disk failed: %v", err)
+			// the memory queue does not return an error
+			_ = s.memoryPool.Push(model)
+			return nil
 		}
-		return nil
+		return fmt.Errorf("writing to disk failed: %v", err)
 	}
-
-	return errors.New("sender shutdown")
+	return nil
 }
 
-func (s *Sender) publish(query string, dataModels []ballistic.DataModel) error {
+func (s *Sender) publish(ctx context.Context, query string, dataModels []ballistic.DataModel) error {
 	panicked := true
-	tx, err := s.connect.Begin()
+	tx, err := s.connect.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -93,14 +86,14 @@ func (s *Sender) publish(query string, dataModels []ballistic.DataModel) error {
 	}()
 
 	err = func() error {
-		stmt, err := tx.Prepare(query)
+		stmt, err := tx.PrepareContext(ctx, query)
 		if err != nil {
 			return err
 		}
 
 		for _, dataModel := range dataModels {
 			args := dataModel.ToExec()
-			_, err := stmt.Exec(args...)
+			_, err := stmt.ExecContext(ctx, args...)
 			if err != nil {
 				return err
 			}
@@ -138,94 +131,99 @@ func (s *Sender) fallback(dataModels []ballistic.DataModel, memorySafe bool) {
 	}
 }
 
-func (s *Sender) RunPusher(period time.Duration, limit int) {
-	if period < time.Millisecond {
-		period = time.Millisecond
+func (s Sender) send(ctx context.Context) {
+	extractSize := 0
+	safes := map[string][]ballistic.DataModel{}
+	ejectModels, _ := s.memoryPool.Eject(s.cfg.SendLimit)
+	extractSize += len(ejectModels)
+	for _, dataModel := range ejectModels {
+		query := dataModel.SQL()
+		safes[query] = append(safes[query], dataModel)
 	}
 
-	t := time.NewTicker(period)
-	go func() {
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				extractSize := 0
-				safes := map[string][]ballistic.DataModel{}
-				ejectModels, _ := s.memoryPool.Eject(limit)
-				extractSize += len(ejectModels)
-				for _, dataModel := range ejectModels {
-					query := dataModel.SQL()
-					safes[query] = append(safes[query], dataModel)
-				}
+	extractCount := s.cfg.SendLimit - extractSize
+	if extractCount > 0 {
+		ejectModels, err := s.filePool.Eject(extractCount)
+		extractSize += len(ejectModels)
+		if err != nil {
+			s.logger.Warnw("problem ejecting queue from disk", "error", err)
+		}
+		for _, dataModel := range ejectModels {
+			query := dataModel.SQL()
+			safes[query] = append(safes[query], dataModel)
+		}
+	}
 
-				extractCount := limit - extractSize
-				if extractCount > 0 {
-					ejectModels, err := s.filePool.Eject(extractCount)
-					extractSize += len(ejectModels)
-					if err != nil {
-						s.logger.Warnw("problem ejecting queue from disk", "error", err)
-					}
-					for _, dataModel := range ejectModels {
-						query := dataModel.SQL()
-						safes[query] = append(safes[query], dataModel)
-					}
-				}
-
-				for query, dataModels := range safes {
-					err := s.publish(query, dataModels)
-					if err != nil {
-						s.logger.Warnw("publication ended with an error", "error", err)
-						s.fallback(dataModels, s.cfg.UseMemoryFallback)
-					} else {
-						if s.cfg.ShowSuccessfulInfo {
-							s.logger.Infow("successfully sent", "count", len(dataModels))
-						}
-					}
-				}
-			case sendTail := <-s.stopSig:
-				ejectModels, _ := s.memoryPool.Eject(-1)
-				if !sendTail {
-					if len(ejectModels) > 0 {
-						if err := s.filePool.Append(ejectModels); err != nil {
-							s.logger.Errorw("data lost! fatal error writing to disk when stopping sender",
-								"error", err,
-								"lost", len(ejectModels),
-							)
-						}
-					}
-					close(s.stopSig)
-					return
-				}
-
-				safes := map[string][]ballistic.DataModel{}
-
-				// From memory
-				for _, dataModel := range ejectModels {
-					query := dataModel.SQL()
-					safes[query] = append(safes[query], dataModel)
-				}
-
-				// From file
-				ejectModels, err := s.filePool.Eject(-1)
-				if err != nil {
-					s.logger.Warnw("problem ejecting queue from disk", "error", err)
-				}
-				for _, dataModel := range ejectModels {
-					query := dataModel.SQL()
-					safes[query] = append(safes[query], dataModel)
-				}
-
-				for query, dataModels := range safes {
-					err := s.publish(query, dataModels)
-					if err != nil {
-						s.logger.Warnw("publication ended with an error", "error", err)
-						s.fallback(dataModels, false)
-					}
-				}
-
-				close(s.stopSig)
-				return
+	for query, dataModels := range safes {
+		err := s.publish(ctx, query, dataModels)
+		if err != nil {
+			s.logger.Warnw("publication ended with an error", "error", err)
+			s.fallback(dataModels, s.cfg.UseMemoryFallback)
+		} else {
+			if s.cfg.ShowSuccessfulInfo {
+				s.logger.Infow("successfully sent", "count", len(dataModels))
 			}
 		}
-	}()
+	}
+}
+
+func (s Sender) stop(ctx context.Context, sendTail bool) {
+	ejectModels, _ := s.memoryPool.Eject(-1)
+	if !sendTail {
+		if len(ejectModels) > 0 {
+			if err := s.filePool.Append(ejectModels); err != nil {
+				s.logger.Errorw("data lost! fatal error writing to disk when stopping sender",
+					"error", err,
+					"lost", len(ejectModels),
+				)
+			}
+		}
+		close(s.stopSig)
+		return
+	}
+
+	safes := map[string][]ballistic.DataModel{}
+
+	// From memory
+	for _, dataModel := range ejectModels {
+		query := dataModel.SQL()
+		safes[query] = append(safes[query], dataModel)
+	}
+
+	// From file
+	ejectModels, err := s.filePool.Eject(-1)
+	if err != nil {
+		s.logger.Warnw("problem ejecting queue from disk", "error", err)
+	}
+	for _, dataModel := range ejectModels {
+		query := dataModel.SQL()
+		safes[query] = append(safes[query], dataModel)
+	}
+
+	for query, dataModels := range safes {
+		err := s.publish(ctx, query, dataModels)
+		if err != nil {
+			s.logger.Warnw("publication ended with an error", "error", err)
+			s.fallback(dataModels, false)
+		}
+	}
+
+	close(s.stopSig)
+}
+
+func (s *Sender) RunPusher(ctx context.Context) {
+	t := time.NewTicker(s.cfg.SendInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			s.send(ctx)
+		case sendTail := <-s.stopSig:
+			s.stop(ctx, sendTail)
+			return
+		case <-ctx.Done():
+			s.stop(context.Background(), false)
+			return
+		}
+	}
 }

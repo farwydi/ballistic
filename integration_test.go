@@ -117,9 +117,11 @@ func TestSenderInRealDatabase(t *testing.T) {
 	s := sender.NewSender(conn, sender.Config{
 		UseMemoryFallback: true,
 		FileWorkspace:     tempDir,
+		SendLimit:         1000,
+		SendInterval:      100 * time.Millisecond,
 	})
 
-	s.RunPusher(100*time.Millisecond, 1000)
+	go s.RunPusher(context.Background())
 
 	var it int32
 	var wg sync.WaitGroup

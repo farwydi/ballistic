@@ -1,10 +1,15 @@
 package sender
 
-import "io/ioutil"
+import (
+	"io/ioutil"
+	"time"
+)
 
 // Config defines the config for file queue.
 type Config struct {
 	Logger             Logger
+	SendInterval       time.Duration
+	SendLimit          int
 	UseMemoryFallback  bool
 	FileWorkspace      string
 	FleMaxCaraptedFile int
@@ -31,6 +36,14 @@ func configDefault(config ...Config) Config {
 
 	if cfg.FileWorkspace == "" {
 		cfg.FileWorkspace, _ = ioutil.TempDir("", "ballistic")
+	}
+
+	if cfg.SendLimit == 0 {
+		cfg.SendLimit = 1
+	}
+
+	if cfg.SendInterval < 100*time.Millisecond {
+		cfg.SendInterval = 100 * time.Millisecond
 	}
 
 	return cfg
