@@ -7,6 +7,7 @@ import (
 	"github.com/farwydi/ballistic"
 	"github.com/farwydi/ballistic/queue/file"
 	"github.com/farwydi/ballistic/queue/memory"
+	"sync/atomic"
 	"time"
 )
 
@@ -46,16 +47,26 @@ type Sender struct {
 	filePool   ballistic.Pool
 	memoryPool ballistic.Pool
 
-	stopSig chan bool
-	connect *sql.DB
+	isShutdown int32
+	stopSig    chan bool
+	connect    *sql.DB
 }
 
 func (s *Sender) Stop(sendTail bool) {
+	if atomic.LoadInt32(&s.isShutdown) == 1 {
+		s.logger.Warnw("sender is shutdown")
+		return
+	}
+
 	s.stopSig <- sendTail
 	<-s.stopSig
 }
 
 func (s *Sender) Push(model ballistic.DataModel) error {
+	if atomic.LoadInt32(&s.isShutdown) == 1 {
+		return fmt.Errorf("sender is shutdown")
+	}
+
 	err := s.filePool.Push(model)
 	if err != nil {
 		if s.cfg.UseMemoryFallback {
@@ -131,7 +142,7 @@ func (s *Sender) fallback(dataModels []ballistic.DataModel, memorySafe bool) {
 	}
 }
 
-func (s Sender) send(ctx context.Context) {
+func (s *Sender) send(ctx context.Context) {
 	extractSize := 0
 	safes := map[string][]ballistic.DataModel{}
 	ejectModels, _ := s.memoryPool.Eject(s.cfg.SendLimit)
@@ -167,7 +178,9 @@ func (s Sender) send(ctx context.Context) {
 	}
 }
 
-func (s Sender) stop(ctx context.Context, sendTail bool) {
+func (s *Sender) stop(ctx context.Context, sendTail bool) {
+	atomic.StoreInt32(&s.isShutdown, 1)
+
 	ejectModels, _ := s.memoryPool.Eject(-1)
 	if !sendTail {
 		if len(ejectModels) > 0 {

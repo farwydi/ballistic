@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestAppendMap(t *testing.T) {
@@ -15,9 +16,12 @@ func TestAppendMap(t *testing.T) {
 func TestSenderStopByCtx(t *testing.T) {
 	ctx, off := context.WithCancel(context.Background())
 
-	s := NewSender(nil)
+	s := NewSender(nil, Config{SendInterval: 100 * time.Millisecond})
 
 	go s.RunPusher(ctx)
 	off()
+
+	<-time.After(101 * time.Millisecond)
+
 	s.Stop(false)
 }
