@@ -14,9 +14,9 @@ func NewSender(connect *sql.DB, config ...Config) *Sender {
 	// Set default config
 	cfg := configDefault(config...)
 
-	logger, _ := NewStdLogger()
-	if cfg.Logger != nil {
-		logger = cfg.Logger
+	logger := cfg.Logger
+	if cfg.Logger == nil {
+		logger, _ = NewStdLogger()
 	}
 
 	return &Sender{
