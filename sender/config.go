@@ -22,6 +22,8 @@ var ConfigDefault = Config{
 	FileWorkspace:      "/tmp",
 	FleMaxCaraptedFile: 1,
 	ShowSuccessfulInfo: false,
+	SendInterval:       10 * time.Second,
+	SendLimit:          1000,
 }
 
 // Helper function to set default values
